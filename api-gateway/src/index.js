@@ -13,7 +13,6 @@ const PORT = process.env.PORT || 3000;
 
 // ─── Basic Middleware ──────────────────────────────────────────
 app.use(cors());
-app.use(express.json());
 app.use(morgan('dev'));
 
 // ─── Rate Limiting ─────────────────────────────────────────────
