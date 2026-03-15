@@ -18,18 +18,23 @@ A minimal but complete microservices-based e-commerce backend built with **Node.
                     │ User Service  │ │  Product  │ │    Order    │
                     │    :3001      │ │  Service  │ │   Service   │
                     │               │ │   :3002   │ │    :3003    │
-                    └──────┬────────┘ └─────┬─────┘ └──────┬──────┘
-                           │               │               │
-                    ┌──────▼──────┐ ┌──────▼─────┐ ┌──────▼──────┐
-                    │  users-db   │ │ products-db│ │  orders-db  │
-                    │ PostgreSQL  │ │ PostgreSQL │ │  PostgreSQL │
-                    └─────────────┘ └────────────┘ └─────────────┘
+                          └──────┬────────┘ └─────┬─────┘ ┌──────▼───────────┐
+                            │               │       │ Notification      │
+                          ┌──────▼──────┐ ┌──────▼─────┐ │ Service (FastAPI) │
+                          │  users-db   │ │ products-db│ │      :8000        │
+                          │ PostgreSQL  │ │ PostgreSQL │ └────────────────────┘
+                          └─────────────┘ └────────────┘
+                          ┌──────▼──────┐
+                          │  orders-db  │
+                          │  PostgreSQL │
+                          └─────────────┘
 ```
 
 ### Key Concepts Demonstrated
 - **Database per service** — each service owns its data
 - **Custom API Gateway** — single entry point for all clients
 - **Inter-service communication** — Order Service calls Product Service via HTTP (synchronous)
+- **Event-like notification hook** — Order Service calls Notification Service when an order is completed
 - **JWT propagation** — gateway validates token and passes user context as headers
 - **Docker networking** — services communicate via internal Docker network
 
@@ -45,6 +50,14 @@ A minimal but complete microservices-based e-commerce backend built with **Node.
 git clone <repo>
 cd ecommerce
 docker compose up --build
+```
+
+For Gmail SMTP delivery, export these variables before running compose:
+
+```bash
+export GMAIL_SMTP_USER="your-gmail-address@gmail.com"
+export GMAIL_SMTP_PASSWORD="your-gmail-app-password"
+export GMAIL_SMTP_FROM_EMAIL="your-gmail-address@gmail.com"
 ```
 
 All services start automatically. The gateway is available at **http://localhost:3000**.
@@ -155,6 +168,8 @@ Content-Type: application/json
 { "status": "shipped" }  # pending | confirmed | shipped | delivered | cancelled
 ```
 
+Use `completed` (or `delivered`) to trigger order completion email notifications.
+
 ---
 
 ## 🏥 Health Checks
@@ -206,6 +221,11 @@ ecommerce/
         ├── models/db.js
         ├── controllers/orderController.js
         └── routes/orderRoutes.js
+├── notification-service/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── app/
+│       └── main.py
 ```
 
 ---

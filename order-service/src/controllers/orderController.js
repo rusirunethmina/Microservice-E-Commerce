@@ -3,6 +3,40 @@ const { pool } = require('../models/db');
 const { validationResult } = require('express-validator');
 
 const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL || 'http://localhost:3002';
+const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://localhost:3001';
+const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:3004';
+
+async function sendOrderCompletedEmail(order) {
+  try {
+    console.log(`[OrderService] Preparing completion email for order_id=${order.id}, user_id=${order.user_id}`);
+
+    const userResponse = await axios.get(`${USER_SERVICE_URL}/${order.user_id}`);
+    const user = userResponse?.data?.user;
+
+    if (!user || !user.email) {
+      console.warn(`[OrderService] Skipping notification: user/email not found for user_id=${order.user_id}`);
+      return;
+    }
+
+    const notificationResponse = await axios.post(`${NOTIFICATION_SERVICE_URL}/notify/order-completed`, {
+      to_email: user.email,
+      customer_name: user.name,
+      order_id: order.id,
+      total_price: Number(order.total_price),
+      completed_at: order.updated_at,
+    }, {
+      timeout: 8000,
+    });
+
+    console.log(`[OrderService] Notification sent for order_id=${order.id}: ${notificationResponse.status}`);
+  } catch (err) {
+    if (err.response) {
+      console.error('[OrderService] Notification dispatch failed:', err.response.status, err.response.data);
+      return;
+    }
+    console.error('[OrderService] Notification dispatch failed:', err.message);
+  }
+}
 
 // POST /  — place a new order
 async function createOrder(req, res) {
@@ -131,7 +165,7 @@ async function updateOrderStatus(req, res) {
     return res.status(403).json({ success: false, message: 'Only admins can update order status' });
 
   const { status } = req.body;
-  const validStatuses = ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'];
+  const validStatuses = ['pending', 'confirmed', 'shipped', 'delivered', 'completed', 'cancelled'];
   if (!validStatuses.includes(status))
     return res.status(400).json({ success: false, message: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
 
@@ -143,7 +177,12 @@ async function updateOrderStatus(req, res) {
     if (result.rows.length === 0)
       return res.status(404).json({ success: false, message: 'Order not found' });
 
-    res.json({ success: true, message: 'Order status updated', data: result.rows[0] });
+    const updatedOrder = result.rows[0];
+    if (status === 'completed' || status === 'delivered') {
+      await sendOrderCompletedEmail(updatedOrder);
+    }
+
+    res.json({ success: true, message: 'Order status updated', data: updatedOrder });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

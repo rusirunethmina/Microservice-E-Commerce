@@ -109,6 +109,7 @@ services:
       JWT_SECRET: supersecretjwtkey123
       PRODUCT_SERVICE_URL: http://product-service:3002
       USER_SERVICE_URL: http://user-service:3001
+      NOTIFICATION_SERVICE_URL: http://notification-service:3004
     depends_on:
       orders-db:
         condition: service_healthy
@@ -116,6 +117,19 @@ services:
         condition: service_started
       user-service:
         condition: service_started
+      notification-service:
+        condition: service_started
+    networks:
+      - ecommerce-network
+    restart: unless-stopped
+
+  notification-service:
+    build: ./notification-service
+    container_name: notification-service
+    env_file:
+      - ./notification-service/.env.example
+    environment:
+      PORT: 3004
     networks:
       - ecommerce-network
     restart: unless-stopped
@@ -130,6 +144,7 @@ services:
       USER_SERVICE_URL: http://user-service:3001
       PRODUCT_SERVICE_URL: http://product-service:3002
       ORDER_SERVICE_URL: http://order-service:3003
+      NOTIFICATION_SERVICE_URL: http://notification-service:3004
       JWT_SECRET: supersecretjwtkey123
       RATE_LIMIT_WINDOW_MS: 60000
       RATE_LIMIT_MAX: 100
@@ -137,6 +152,7 @@ services:
       - user-service
       - product-service
       - order-service
+      - notification-service
     networks:
       - ecommerce-network
     restart: unless-stopped
