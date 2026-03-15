@@ -1,11 +1,14 @@
 require('dotenv').config();
 const express = require('express');
 const { initDB } = require('./models/db');
+const requestContext = require('./middleware/requestContext');
 const orderRoutes = require('./routes/orderRoutes');
+const { logger } = require('./utils/logger');
 
 const app = express();
 const PORT = process.env.PORT || 3003;
 
+app.use(requestContext);
 app.use(express.json());
 
 app.get('/health', (req, res) =>
@@ -15,13 +18,17 @@ app.get('/health', (req, res) =>
 app.use('/', orderRoutes);
 
 app.use((err, req, res, next) => {
-  console.error('[OrderService] Error:', err.message);
+  const requestLogger = req?.log || logger;
+  requestLogger.error('request.failed', {
+    errorMessage: err.message,
+    stack: err.stack,
+  });
   res.status(500).json({ success: false, message: 'Internal server error' });
 });
 
 async function start() {
   await initDB();
-  app.listen(PORT, () => console.log(`[OrderService] Running on port ${PORT}`));
+  app.listen(PORT, () => logger.info('service.started', { port: PORT }));
 }
 
 start();

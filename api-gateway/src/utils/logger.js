@@ -1,15 +1,27 @@
 const winston = require('winston');
 
+const serviceName = process.env.SERVICE_NAME || 'api-gateway';
+
 const logger = winston.createLogger({
-  level: 'info',
+  level: process.env.LOG_LEVEL || 'info',
+  defaultMeta: {
+    service: serviceName,
+    environment: process.env.NODE_ENV || 'development',
+  },
   format: winston.format.combine(
     winston.format.timestamp(),
-    winston.format.colorize(),
-    winston.format.printf(({ timestamp, level, message }) => {
-      return `[${timestamp}] [API-GATEWAY] ${level}: ${message}`;
-    })
+    winston.format.errors({ stack: true }),
+    winston.format.json()
   ),
   transports: [new winston.transports.Console()],
 });
 
-module.exports = logger;
+function getRequestLogger(req) {
+  return logger.child({
+    requestId: req.requestId,
+    method: req.method,
+    path: req.originalUrl,
+  });
+}
+
+module.exports = { logger, getRequestLogger };

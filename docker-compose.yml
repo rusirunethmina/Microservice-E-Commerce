@@ -1,6 +1,47 @@
-version: '3.8'
-
 services:
+  loki:
+    image: grafana/loki:3.2.1
+    container_name: loki
+    command: ["-config.file=/etc/loki/config.yml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./observability/loki-config.yml:/etc/loki/config.yml:ro
+      - loki-data:/loki
+    networks:
+      - ecommerce-network
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.8.3
+    container_name: alloy
+    command: ["run", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./observability/alloy-config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - loki
+    networks:
+      - ecommerce-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: grafana
+    ports:
+      - "3005:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - loki
+    networks:
+      - ecommerce-network
+    restart: unless-stopped
+
   # ─── Databases ───────────────────────────────────────────────
   users-db:
     image: postgres:15-alpine
@@ -158,6 +199,8 @@ services:
     restart: unless-stopped
 
 volumes:
+  loki-data:
+  grafana-data:
   users-db-data:
   products-db-data:
   orders-db-data:

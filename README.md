@@ -4,6 +4,7 @@ Production-style microservices backend for e-commerce, built with Node.js, FastA
 
 The system demonstrates:
 - API gateway routing with JWT verification and user context propagation
+- Correlated structured logging with centralized aggregation in Grafana Loki
 - Database-per-service ownership
 - Synchronous service-to-service orchestration for order placement
 - Event-like notification trigger on order completion
@@ -81,6 +82,7 @@ sequenceDiagram
 - Order Service: Express + PostgreSQL + Axios
 - Notification Service: FastAPI + SMTP (Gmail-compatible)
 - Infrastructure: Docker Compose + PostgreSQL 15
+- Observability: Grafana Loki + Grafana Alloy + Grafana
 
 ## 3) Service Responsibilities
 
@@ -133,6 +135,14 @@ docker compose up --build
 Gateway will be available at:
 - http://localhost:3000
 
+Centralized logs will be available at:
+- Grafana: http://localhost:3005
+- Loki API: http://localhost:3100
+
+Grafana default credentials:
+- username: admin
+- password: admin
+
 ### Stop everything
 
 ```bash
@@ -168,13 +178,39 @@ Important:
 ## 6) Exposed Ports
 
 - 3000 -> api-gateway
+- 3005 -> grafana
+- 3100 -> loki
 - 5433 -> users-db
 - 5434 -> products-db
 - 5435 -> orders-db
 
 Service ports 3001-3004 are internal to the Docker network.
 
-## 7) Authentication Model
+## 7) Centralized Logging
+
+All services now emit JSON logs to stdout with:
+- service name
+- timestamp
+- log level
+- request ID (`x-request-id`)
+- request path and method
+- response status and duration
+
+The API gateway generates a request ID when one is not provided and propagates it to downstream services. The order service also forwards the same request ID to internal calls made to user-service, product-service, and notification-service. That lets you trace a single order flow across the full stack in Grafana.
+
+In Grafana Explore, a useful starting query is:
+
+```logql
+{stack="ecommerce"}
+```
+
+To isolate a single request end-to-end, filter by request ID:
+
+```logql
+{stack="ecommerce"} |= "<request-id>"
+```
+
+## 8) Authentication Model
 
 Gateway public routes:
 - POST /api/users/register
@@ -191,7 +227,7 @@ Authorization: Bearer <jwt-token>
 
 Role authorization is enforced by downstream services using x-user-role, especially for admin-only operations.
 
-## 8) API Reference
+## 9) API Reference
 
 Base URL:
 - http://localhost:3000

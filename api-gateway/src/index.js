@@ -1,19 +1,19 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 
 const authMiddleware = require('./middleware/auth');
+const requestContext = require('./middleware/requestContext');
 const registerRoutes = require('./routes/proxy');
-const logger = require('./utils/logger');
+const { logger } = require('./utils/logger');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── Basic Middleware ──────────────────────────────────────────
 app.use(cors());
-app.use(morgan('dev'));
+app.use(requestContext);
 
 // ─── Rate Limiting ─────────────────────────────────────────────
 const limiter = rateLimit({
@@ -62,14 +62,23 @@ app.use((req, res) => {
 
 // ─── Global Error Handler ──────────────────────────────────────
 app.use((err, req, res, next) => {
-  logger.error(`Unhandled error: ${err.message}`);
+  const requestLogger = req?.log || logger;
+  requestLogger.error('request.failed', {
+    errorMessage: err.message,
+    stack: err.stack,
+  });
   res.status(500).json({ success: false, message: 'Internal gateway error' });
 });
 
 // ─── Start ────────────────────────────────────────────────────
 app.listen(PORT, () => {
-  logger.info(`API Gateway running on port ${PORT}`);
-  logger.info(`→ Users:    ${process.env.USER_SERVICE_URL}`);
-  logger.info(`→ Products: ${process.env.PRODUCT_SERVICE_URL}`);
-  logger.info(`→ Orders:   ${process.env.ORDER_SERVICE_URL}`);
+  logger.info('service.started', {
+    port: PORT,
+    upstreams: {
+      users: process.env.USER_SERVICE_URL,
+      products: process.env.PRODUCT_SERVICE_URL,
+      orders: process.env.ORDER_SERVICE_URL,
+      notifications: process.env.NOTIFICATION_SERVICE_URL,
+    },
+  });
 });

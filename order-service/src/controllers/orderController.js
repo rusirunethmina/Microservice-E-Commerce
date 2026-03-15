@@ -1,20 +1,32 @@
 const axios = require('axios');
 const { pool } = require('../models/db');
 const { validationResult } = require('express-validator');
+const { logger } = require('../utils/logger');
 
 const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL || 'http://localhost:3002';
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://localhost:3001';
 const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:3004';
 
-async function sendOrderCompletedEmail(order) {
-  try {
-    console.log(`[OrderService] Preparing completion email for order_id=${order.id}, user_id=${order.user_id}`);
+function getHeaders(requestId) {
+  return requestId ? { 'x-request-id': requestId } : {};
+}
 
-    const userResponse = await axios.get(`${USER_SERVICE_URL}/${order.user_id}`);
+async function sendOrderCompletedEmail(order, requestId) {
+  const requestLogger = requestId ? logger.child({ requestId }) : logger;
+
+  try {
+    requestLogger.info('notification.prepare_order_completed_email', {
+      orderId: order.id,
+      userId: order.user_id,
+    });
+
+    const userResponse = await axios.get(`${USER_SERVICE_URL}/${order.user_id}`, {
+      headers: getHeaders(requestId),
+    });
     const user = userResponse?.data?.user;
 
     if (!user || !user.email) {
-      console.warn(`[OrderService] Skipping notification: user/email not found for user_id=${order.user_id}`);
+      requestLogger.warn('notification.user_missing', { userId: order.user_id });
       return;
     }
 
@@ -25,21 +37,34 @@ async function sendOrderCompletedEmail(order) {
       total_price: Number(order.total_price),
       completed_at: order.updated_at,
     }, {
+      headers: getHeaders(requestId),
       timeout: 8000,
     });
 
-    console.log(`[OrderService] Notification sent for order_id=${order.id}: ${notificationResponse.status}`);
+    requestLogger.info('notification.sent', {
+      orderId: order.id,
+      statusCode: notificationResponse.status,
+      recipient: user.email,
+    });
   } catch (err) {
     if (err.response) {
-      console.error('[OrderService] Notification dispatch failed:', err.response.status, err.response.data);
+      requestLogger.error('notification.dispatch_failed', {
+        orderId: order.id,
+        statusCode: err.response.status,
+        responseData: err.response.data,
+      });
       return;
     }
-    console.error('[OrderService] Notification dispatch failed:', err.message);
+    requestLogger.error('notification.dispatch_failed', {
+      orderId: order.id,
+      errorMessage: err.message,
+    });
   }
 }
 
 // POST /  — place a new order
 async function createOrder(req, res) {
+  const requestLogger = req.log || logger;
   const errors = validationResult(req);
   if (!errors.isEmpty())
     return res.status(400).json({ success: false, errors: errors.array() });
@@ -54,7 +79,9 @@ async function createOrder(req, res) {
     // 1. Validate all products exist and get their prices
     const productDetails = await Promise.all(
       items.map(async (item) => {
-        const { data } = await axios.get(`${PRODUCT_SERVICE_URL}/${item.productId}`);
+        const { data } = await axios.get(`${PRODUCT_SERVICE_URL}/${item.productId}`, {
+          headers: getHeaders(req.requestId),
+        });
         if (!data.success) throw new Error(`Product ${item.productId} not found`);
         return { ...data.data, quantity: item.quantity };
       })
@@ -90,9 +117,18 @@ async function createOrder(req, res) {
       // 5. Reduce stock via internal product service call
       await axios.post(`${PRODUCT_SERVICE_URL}/internal/reduce-stock`, {
         items: items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+      }, {
+        headers: getHeaders(req.requestId),
       });
 
       await client.query('COMMIT');
+
+      requestLogger.info('order.created', {
+        orderId: order.id,
+        userId,
+        itemCount: items.length,
+        totalPrice: Number(totalPrice.toFixed(2)),
+      });
 
       res.status(201).json({
         success: true,
@@ -106,7 +142,7 @@ async function createOrder(req, res) {
       client.release();
     }
   } catch (err) {
-    console.error('[OrderService] createOrder error:', err.message);
+    requestLogger.error('order.create_failed', { errorMessage: err.message });
     res.status(500).json({ success: false, message: err.message });
   }
 }
@@ -160,6 +196,7 @@ async function getOrderById(req, res) {
 
 // PUT /:id/status  — admin only
 async function updateOrderStatus(req, res) {
+  const requestLogger = req.log || logger;
   const role = req.headers['x-user-role'];
   if (role !== 'admin')
     return res.status(403).json({ success: false, message: 'Only admins can update order status' });
@@ -178,8 +215,13 @@ async function updateOrderStatus(req, res) {
       return res.status(404).json({ success: false, message: 'Order not found' });
 
     const updatedOrder = result.rows[0];
+    requestLogger.info('order.status_updated', {
+      orderId: updatedOrder.id,
+      status,
+    });
+
     if (status === 'completed' || status === 'delivered') {
-      await sendOrderCompletedEmail(updatedOrder);
+      await sendOrderCompletedEmail(updatedOrder, req.requestId);
     }
 
     res.json({ success: true, message: 'Order status updated', data: updatedOrder });

@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const logger = require('../utils/logger');
+const { logger } = require('../utils/logger');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretjwtkey123';
 
@@ -25,9 +25,10 @@ function authMiddleware(req, res, next) {
   }
 
   const authHeader = req.headers['authorization'];
+  const requestLogger = req.log || logger;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    logger.warn(`Unauthorized request to ${req.method} ${req.path}`);
+    requestLogger.warn('auth.missing_token');
     return res.status(401).json({
       success: false,
       message: 'Authorization token missing or malformed. Use: Bearer <token>',
@@ -42,10 +43,14 @@ function authMiddleware(req, res, next) {
     req.headers['x-user-id'] = String(decoded.id);
     req.headers['x-user-email'] = decoded.email;
     req.headers['x-user-role'] = decoded.role || 'user';
-    logger.info(`Authenticated user ${decoded.email} → ${req.method} ${req.path}`);
+    requestLogger.info('auth.authenticated', {
+      userId: decoded.id,
+      email: decoded.email,
+      role: decoded.role || 'user',
+    });
     next();
   } catch (err) {
-    logger.warn(`Invalid token: ${err.message}`);
+    requestLogger.warn('auth.invalid_token', { errorMessage: err.message });
     return res.status(401).json({
       success: false,
       message: 'Invalid or expired token',

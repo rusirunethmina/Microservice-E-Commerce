@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const { logger } = require('../utils/logger');
 
 const pool = new Pool({
   host:     process.env.DB_HOST     || 'localhost',
@@ -16,10 +17,14 @@ async function waitForDB(retries = 10, delayMs = 2000) {
     try {
       const client = await pool.connect();
       client.release();
-      console.log('[UserService] ✅ Connected to database');
+      logger.info('database.connected');
       return;
     } catch (err) {
-      console.log(`[UserService] ⏳ Waiting for DB... (attempt ${i}/${retries}): ${err.message}`);
+      logger.warn('database.waiting', {
+        attempt: i,
+        retries,
+        errorMessage: err.message,
+      });
       if (i === retries) throw new Error('Could not connect to database after multiple retries');
       await new Promise((res) => setTimeout(res, delayMs));
     }
@@ -38,7 +43,7 @@ async function initDB() {
       created_at TIMESTAMP    NOT NULL DEFAULT NOW()
     );
   `);
-  console.log('[UserService] Database initialized');
+  logger.info('database.initialized');
 }
 
 module.exports = { pool, initDB };

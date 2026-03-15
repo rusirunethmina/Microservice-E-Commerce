@@ -1,0 +1,54 @@
+discovery.docker "microservices" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "microservices" {
+  targets = discovery.docker.microservices.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+    replacement   = "$1"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(users-db|products-db|orders-db|grafana|loki|alloy)"
+    action        = "drop"
+  }
+}
+
+loki.source.docker "microservices" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.microservices.output
+  forward_to       = [loki.process.microservices.receiver]
+  relabel_rules    = discovery.relabel.microservices.rules
+  refresh_interval = "5s"
+}
+
+loki.process "microservices" {
+  stage.static_labels {
+    values = {
+      stack = "ecommerce",
+    }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

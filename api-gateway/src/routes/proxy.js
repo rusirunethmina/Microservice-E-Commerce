@@ -1,5 +1,5 @@
 const { createProxyMiddleware, fixRequestBody } = require('http-proxy-middleware');
-const logger = require('../utils/logger');
+const { logger } = require('../utils/logger');
 
 const USER_SERVICE_URL    = process.env.USER_SERVICE_URL    || 'http://localhost:3001';
 const PRODUCT_SERVICE_URL = process.env.PRODUCT_SERVICE_URL || 'http://localhost:3002';
@@ -23,10 +23,22 @@ function makeProxy(target, serviceName, pathPrefix) {
       proxyReq: (proxyReq, req) => {
         // Re-attach the parsed body so Content-Length is correct
         fixRequestBody(proxyReq, req);
-        logger.info(`[${serviceName}] → ${req.method} ${req.path}`);
+        if (req.requestId) {
+          proxyReq.setHeader('x-request-id', req.requestId);
+        }
+
+        const requestLogger = req.log || logger;
+        requestLogger.info('proxy.forward', {
+          targetService: serviceName,
+          target,
+        });
       },
       error: (err, req, res) => {
-        logger.error(`[${serviceName}] Proxy error: ${err.message}`);
+        const requestLogger = req.log || logger;
+        requestLogger.error('proxy.error', {
+          targetService: serviceName,
+          errorMessage: err.message,
+        });
         res.status(502).json({
           success: false,
           message: `${serviceName} is currently unavailable`,

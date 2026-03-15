@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const { logger } = require('../utils/logger');
 
 const pool = new Pool({
   host:     process.env.DB_HOST     || 'localhost',
@@ -16,10 +17,14 @@ async function waitForDB(retries = 10, delayMs = 2000) {
     try {
       const client = await pool.connect();
       client.release();
-      console.log('[ProductService] ✅ Connected to database');
+      logger.info('database.connected');
       return;
     } catch (err) {
-      console.log(`[ProductService] ⏳ Waiting for DB... (attempt ${i}/${retries}): ${err.message}`);
+      logger.warn('database.waiting', {
+        attempt: i,
+        retries,
+        errorMessage: err.message,
+      });
       if (i === retries) throw new Error('Could not connect to database after multiple retries');
       await new Promise((res) => setTimeout(res, delayMs));
     }
@@ -52,10 +57,10 @@ async function initDB() {
         ('Coffee Mug', 'Insulated stainless steel coffee mug', 19.99, 200, 'Kitchen'),
         ('Backpack', 'Waterproof laptop backpack 30L', 49.99, 75, 'Bags');
     `);
-    console.log('[ProductService] Seeded initial products');
+    logger.info('database.seeded_products');
   }
 
-  console.log('[ProductService] Database initialized');
+  logger.info('database.initialized');
 }
 
 module.exports = { pool, initDB };
