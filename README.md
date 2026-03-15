@@ -1,116 +1,266 @@
-# 🛒 E-Commerce Microservices
+# E-Commerce Microservices
 
-A minimal but complete microservices-based e-commerce backend built with **Node.js (Express)**, **FastAPI (Python)**, **PostgreSQL**, and **Docker Compose**. Designed as a learning project for Microservice Architecture.
+Production-style microservices backend for e-commerce, built with Node.js, FastAPI, PostgreSQL, and Docker Compose.
 
----
+The system demonstrates:
+- API gateway routing with JWT verification and user context propagation
+- Database-per-service ownership
+- Synchronous service-to-service orchestration for order placement
+- Event-like notification trigger on order completion
 
-## 🏗️ Architecture
+## 1) System Design
 
-```text
-Client
-  -> API Gateway (3000)
-      -> User Service (3001) -> users-db (PostgreSQL)
-      -> Product Service (3002) -> products-db (PostgreSQL)
-      -> Order Service (3003) -> orders-db (PostgreSQL)
+### High-Level Architecture
 
-Internal service-to-service calls:
-- Order Service -> Product Service (stock checks/reduction)
-- Order Service -> User Service (user email lookup)
-- Order Service -> Notification Service (FastAPI, 3004) for order completion emails
+```mermaid
+flowchart LR
+    C[Client Apps] --> G[API Gateway :3000]
+
+    G --> U[User Service :3001]
+    G --> P[Product Service :3002]
+    G --> O[Order Service :3003]
+
+    U --> UDB[(users_db)]
+    P --> PDB[(products_db)]
+    O --> ODB[(orders_db)]
+
+    O -->|GET user details| U
+    O -->|POST reduce stock| P
+    O -->|POST order completed| N[Notification Service :3004]
 ```
 
-### Key Concepts Demonstrated
-- **Database per service** — each service owns its data
-- **Custom API Gateway** — single entry point for all clients
-- **Inter-service communication** — Order Service calls Product Service via HTTP (synchronous)
-- **Order completion notification** — Order Service calls Notification Service when an order is delivered/completed
-- **JWT propagation** — gateway validates token and passes user context as headers
-- **Docker networking** — services communicate via internal Docker network
+### Request Flow (Create Order)
 
----
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Gateway as API Gateway
+    participant Order as Order Service
+    participant Product as Product Service
+    participant DB as orders_db
 
-## 🚀 Quick Start
+    Client->>Gateway: POST /api/orders (Bearer token)
+    Gateway->>Gateway: Verify JWT, inject x-user-* headers
+    Gateway->>Order: Forward POST /
+    Order->>Product: GET /:productId (for each item)
+    Product-->>Order: Product data + stock
+    Order->>DB: BEGIN + insert order + items
+    Order->>Product: POST /internal/reduce-stock
+    Product-->>Order: Stock updated
+    Order->>DB: COMMIT
+    Order-->>Gateway: 201 Order placed
+    Gateway-->>Client: 201 Order placed
+```
+
+### Request Flow (Order Completion Notification)
+
+```mermaid
+sequenceDiagram
+    participant Admin
+    participant Gateway as API Gateway
+    participant Order as Order Service
+    participant User as User Service
+    participant Notify as Notification Service
+
+    Admin->>Gateway: PUT /api/orders/:id/status {status: completed}
+    Gateway->>Order: Forward request with x-user-role=admin
+    Order->>Order: Update status in orders_db
+    Order->>User: GET /:id (fetch customer email)
+    User-->>Order: User profile (name/email)
+    Order->>Notify: POST /notify/order-completed
+    Notify-->>Order: Email send result
+    Order-->>Gateway: 200 Status updated
+    Gateway-->>Admin: 200 Status updated
+```
+
+## 2) Tech Stack
+
+- API Gateway: Express + http-proxy-middleware + jsonwebtoken + express-rate-limit
+- User Service: Express + PostgreSQL + bcryptjs + JWT
+- Product Service: Express + PostgreSQL
+- Order Service: Express + PostgreSQL + Axios
+- Notification Service: FastAPI + SMTP (Gmail-compatible)
+- Infrastructure: Docker Compose + PostgreSQL 15
+
+## 3) Service Responsibilities
+
+### API Gateway
+- Single external entrypoint on port 3000
+- Auth middleware validates bearer tokens except explicitly public routes
+- Injects user context headers to downstream services:
+  - x-user-id
+  - x-user-email
+  - x-user-role
+- Proxies:
+  - /api/users -> user-service
+  - /api/products -> product-service
+  - /api/orders -> order-service
+
+### User Service
+- Register and login users
+- Store hashed passwords
+- Return profile for authenticated users
+- Internal lookup endpoint for other services: GET /:id
+
+### Product Service
+- Public catalog browsing with filtering/pagination
+- Admin-managed create/update/delete
+- Internal stock decrement endpoint: POST /internal/reduce-stock
+
+### Order Service
+- Place orders for authenticated users
+- Validates product existence and stock
+- Persists orders and order items transactionally
+- Calls product-service to reduce inventory
+- Admin can update order status
+- Triggers notification-service when status becomes delivered or completed
+
+### Notification Service
+- Exposes POST /notify/order-completed
+- Sends order completion emails via SMTP
+
+## 4) Run Locally
 
 ### Prerequisites
-- [Docker](https://docs.docker.com/get-docker/) & Docker Compose
+- Docker Desktop (or Docker Engine + Compose plugin)
 
-### Run everything
+### Start everything
 
 ```bash
-git clone <repo>
-cd ecommerce
 docker compose up --build
 ```
 
-For Gmail SMTP delivery, set values in `notification-service/.env.example` (or replace with your own private `.env` file and point `env_file` to it):
+Gateway will be available at:
+- http://localhost:3000
+
+### Stop everything
 
 ```bash
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-gmail-address@gmail.com
-SMTP_PASSWORD=your-gmail-app-password
-SMTP_FROM_EMAIL=your-gmail-address@gmail.com
+docker compose down
 ```
 
-Use a **Gmail App Password** (16 chars), not your regular Gmail account password.
+### Reset with clean databases
 
-All services start automatically. The gateway is available at **http://localhost:3000**.
-
----
-
-## 📡 API Reference
-
-All requests go through the gateway at `http://localhost:3000`.
-
-### 🔓 Public Routes (no token needed)
-
-#### Register
 ```bash
+docker compose down -v
+```
+
+## 5) Environment and Secrets
+
+Notification service reads SMTP settings from:
+- notification-service/.env.example (currently mounted as env_file in compose)
+
+Required variables:
+
+```env
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@example.com
+SMTP_PASSWORD=your-app-password
+SMTP_FROM_EMAIL=your-email@example.com
+```
+
+Important:
+- Use an App Password for Gmail, not your regular account password.
+- Do not commit real SMTP credentials to source control.
+- If credentials are already exposed, rotate them immediately.
+
+## 6) Exposed Ports
+
+- 3000 -> api-gateway
+- 5433 -> users-db
+- 5434 -> products-db
+- 5435 -> orders-db
+
+Service ports 3001-3004 are internal to the Docker network.
+
+## 7) Authentication Model
+
+Gateway public routes:
+- POST /api/users/register
+- POST /api/users/login
+- GET /api/products
+- GET /api/products/:id
+- GET /health
+
+All other gateway routes require:
+
+```http
+Authorization: Bearer <jwt-token>
+```
+
+Role authorization is enforced by downstream services using x-user-role, especially for admin-only operations.
+
+## 8) API Reference
+
+Base URL:
+- http://localhost:3000
+
+### Public Endpoints
+
+#### Register user
+
+```http
 POST /api/users/register
 Content-Type: application/json
+```
 
+Body:
+
+```json
 {
   "name": "Alice",
   "email": "alice@example.com",
   "password": "secret123",
-  "role": "user"          # or "admin"
+  "role": "user"
 }
 ```
 
 #### Login
-```bash
+
+```http
 POST /api/users/login
 Content-Type: application/json
-
-{ "email": "alice@example.com", "password": "secret123" }
-
-# Response includes: { "token": "eyJ..." }
 ```
 
-#### List Products
-```bash
+Body:
+
+```json
+{
+  "email": "alice@example.com",
+  "password": "secret123"
+}
+```
+
+#### Browse products
+
+```http
 GET /api/products
 GET /api/products?category=Electronics
-GET /api/products?search=keyboard&page=1&limit=5
+GET /api/products?search=keyboard&page=1&limit=10
 GET /api/products/:id
 ```
 
----
+### Authenticated Endpoints
 
-### 🔒 Protected Routes (send `Authorization: Bearer <token>`)
+#### User profile
 
-#### User Profile
-```bash
+```http
 GET /api/users/profile
 Authorization: Bearer <token>
 ```
 
-#### Place an Order
-```bash
+#### Create order
+
+```http
 POST /api/orders
 Authorization: Bearer <token>
 Content-Type: application/json
+```
 
+Body:
+
+```json
 {
   "items": [
     { "productId": 1, "quantity": 2 },
@@ -119,8 +269,9 @@ Content-Type: application/json
 }
 ```
 
-#### My Orders
-```bash
+#### Get my orders
+
+```http
 GET /api/orders
 Authorization: Bearer <token>
 
@@ -128,188 +279,115 @@ GET /api/orders/:id
 Authorization: Bearer <token>
 ```
 
----
+### Admin Endpoints
 
-### 🔑 Admin Only Routes
+#### Create product
 
-#### Create Product
-```bash
+```http
 POST /api/products
-Authorization: Bearer <admin_token>
+Authorization: Bearer <admin-token>
 Content-Type: application/json
-
-{
-  "name": "Gaming Mouse",
-  "description": "High-DPI gaming mouse",
-  "price": 45.99,
-  "stock": 100,
-  "category": "Electronics"
-}
 ```
 
-#### Update / Delete Product
-```bash
-PUT    /api/products/:id    # Authorization: Bearer <admin_token>
-DELETE /api/products/:id    # Authorization: Bearer <admin_token>
+#### Update/Delete product
+
+```http
+PUT /api/products/:id
+DELETE /api/products/:id
+Authorization: Bearer <admin-token>
 ```
 
-#### Update Order Status
+#### Update order status
 
-```bash
+```http
 PUT /api/orders/:id/status
-Authorization: Bearer <admin_token>
+Authorization: Bearer <admin-token>
 Content-Type: application/json
-
-{ "status": "completed" }  # pending | confirmed | shipped | delivered | completed | cancelled
 ```
 
-Use `completed` (or `delivered`) to trigger order completion email notifications.
+Body:
 
-#### Internal Notification Endpoint (service-to-service)
-
-```bash
-POST http://notification-service:3004/notify/order-completed
-Content-Type: application/json
-
-{
-  "to_email": "customer@example.com",
-  "customer_name": "Alice",
-  "order_id": 123,
-  "total_price": 59.99
-}
+```json
+{ "status": "completed" }
 ```
 
----
+Valid statuses:
+- pending
+- confirmed
+- shipped
+- delivered
+- completed
+- cancelled
 
-## 🏥 Health Checks
+Notification dispatch is attempted when status is delivered or completed.
 
-```bash
-GET http://localhost:3000/health          # Gateway
-GET http://localhost:3000/api/users/health     # (via gateway)
-GET http://localhost:3000/api/products/health  # (via gateway)
-GET http://localhost:3000/api/orders/health    # (via gateway)
+## 9) Health Checks
 
-# Internal only (Docker network)
+External:
+
+```http
+GET http://localhost:3000/health
+```
+
+Internal Docker network checks:
+
+```http
+GET http://user-service:3001/health
+GET http://product-service:3002/health
+GET http://order-service:3003/health
 GET http://notification-service:3004/health
 ```
 
----
+## 10) Developer Commands
 
-## 📁 Project Structure
-
-```
-ecommerce/
-├── docker-compose.yml
-├── api-gateway/
-│   ├── Dockerfile
-│   ├── package.json
-│   └── src/
-│       ├── index.js                 # Entry point, rate limiting, CORS
-│       ├── middleware/
-│       │   └── auth.js              # JWT validation, public route whitelist
-│       ├── routes/
-│       │   └── proxy.js             # http-proxy-middleware setup
-│       └── utils/
-│           └── logger.js
-├── user-service/
-│   ├── Dockerfile
-│   ├── package.json
-│   └── src/
-│       ├── index.js
-│       ├── models/db.js             # PG pool + table init
-│       ├── controllers/authController.js
-│       └── routes/userRoutes.js
-├── product-service/
-│   ├── Dockerfile
-│   ├── package.json
-│   └── src/
-│       ├── index.js
-│       ├── models/db.js             # PG pool + seeded products
-│       ├── controllers/productController.js
-│       └── routes/productRoutes.js
-├── order-service/
-    ├── Dockerfile
-    ├── package.json
-    └── src/
-        ├── index.js
-        ├── models/db.js
-        ├── controllers/orderController.js
-        └── routes/orderRoutes.js
-└── notification-service/
-│   ├── Dockerfile
-│   ├── .env.example
-│   ├── requirements.txt
-│   └── app/
-│       └── main.py
-```
-
----
-
-## 🔧 Useful Commands
+### Logs
 
 ```bash
-# View logs for a specific service
 docker compose logs -f api-gateway
+docker compose logs -f user-service
+docker compose logs -f product-service
 docker compose logs -f order-service
 docker compose logs -f notification-service
+```
 
-# Rebuild a single service after code change
+### Rebuild one service
+
+```bash
+docker compose up --build api-gateway
+docker compose up --build user-service
 docker compose up --build product-service
-
-# Rebuild notification service only
+docker compose up --build order-service
 docker compose up --build notification-service
+```
 
-# Stop everything and remove volumes (fresh start)
-docker compose down -v
+### Database shells
 
-# Connect to a database
+```bash
 docker exec -it users-db psql -U postgres -d users_db
 docker exec -it products-db psql -U postgres -d products_db
 docker exec -it orders-db psql -U postgres -d orders_db
 ```
 
----
+## 11) Troubleshooting
 
-## 🧪 Quick Test with curl
+### POST requests hang at gateway
 
-```bash
-# 1. Register
-curl -s -X POST http://localhost:3000/api/users/register \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Alice","email":"alice@test.com","password":"pass123"}' | jq
+If gateway parses request bodies before proxying, downstream services may receive empty/invalid streams. This project uses proxy body fixing in gateway proxy middleware to prevent that issue.
 
-# 2. Login → grab token
-TOKEN=$(curl -s -X POST http://localhost:3000/api/users/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"alice@test.com","password":"pass123"}' | jq -r '.token')
+### 401 Unauthorized
 
-# 3. Browse products
-curl -s http://localhost:3000/api/products | jq
+- Confirm Authorization header format is exactly: Bearer <token>
+- Ensure token was generated with the same JWT secret used by gateway and services
 
-# 4. Place an order
-curl -s -X POST http://localhost:3000/api/orders \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"items":[{"productId":1,"quantity":1}]}' | jq
+### Notification errors
 
-# 5. View orders
-curl -s http://localhost:3000/api/orders \
-  -H "Authorization: Bearer $TOKEN" | jq
+- Verify SMTP credentials
+- Verify provider allows SMTP access and app passwords
 
-# 6. (Admin) Mark order as completed to trigger email
-curl -s -X PUT http://localhost:3000/api/orders/1/status \
-  -H "Authorization: Bearer <admin_token>" \
-  -H "Content-Type: application/json" \
-  -d '{"status":"completed"}' | jq
-```
+## 12) Future Improvements
 
----
-
-## 📚 What to Learn Next
-
-1. **Message Queue** — Replace sync HTTP calls with RabbitMQ/Kafka for async communication
-2. **Service Discovery** — Use Consul or Kubernetes DNS instead of hardcoded URLs
-3. **Circuit Breaker** — Add resilience with a library like `opossum`
-4. **Centralized Logging** — Ship logs to ELK Stack or Loki
-5. **Distributed Tracing** — Add request tracing with OpenTelemetry
-6. **API Gateway v2** — Swap custom gateway for Kong or AWS API Gateway
+1. Replace synchronous HTTP chaining with a message broker (RabbitMQ or Kafka)
+2. Add OpenTelemetry tracing across gateway and services
+3. Introduce retries and circuit breaker patterns for outbound service calls
+4. Add automated tests (unit, integration, contract)
+5. Add centralized logging and dashboards (ELK/Loki + Grafana)
