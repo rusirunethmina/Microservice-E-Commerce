@@ -54,14 +54,88 @@ class OrderCompletedEmailRequest(BaseModel):
 
 
 def build_email_body(payload: OrderCompletedEmailRequest) -> str:
-    completed_at = payload.completed_at.isoformat() if payload.completed_at else datetime.utcnow().isoformat()
-    return (
-        f"Hello {payload.customer_name},\n\n"
-        f"Your order #{payload.order_id} has been completed successfully.\n"
-        f"Total amount: ${payload.total_price:.2f}\n"
-        f"Completed at: {completed_at}\n\n"
-        "Thank you for shopping with us.\n"
+    completed_at = (
+        payload.completed_at.strftime("%B %d, %Y at %I:%M %p")
+        if payload.completed_at
+        else datetime.utcnow().strftime("%B %d, %Y at %I:%M %p")
     )
+    return f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7;padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:36px 40px;text-align:center;">
+              <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:600;letter-spacing:0.5px;">Order Confirmed</h1>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:40px;">
+              <p style="margin:0 0 20px;font-size:16px;color:#333333;line-height:1.6;">
+                Hi <strong>{payload.customer_name}</strong>,
+              </p>
+              <p style="margin:0 0 28px;font-size:16px;color:#555555;line-height:1.6;">
+                Great news! Your order has been completed successfully. Here are the details:
+              </p>
+              <!-- Order Details Card -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f8f9fc;border-radius:8px;border:1px solid #e8eaef;margin-bottom:28px;">
+                <tr>
+                  <td style="padding:24px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="padding:8px 0;border-bottom:1px solid #e8eaef;">
+                          <span style="font-size:13px;color:#888888;text-transform:uppercase;letter-spacing:0.5px;">Order Number</span><br>
+                          <span style="font-size:18px;color:#333333;font-weight:600;">#{payload.order_id}</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style="padding:8px 0;border-bottom:1px solid #e8eaef;">
+                          <span style="font-size:13px;color:#888888;text-transform:uppercase;letter-spacing:0.5px;">Total Amount</span><br>
+                          <span style="font-size:22px;color:#667eea;font-weight:700;">${payload.total_price:.2f}</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style="padding:8px 0;">
+                          <span style="font-size:13px;color:#888888;text-transform:uppercase;letter-spacing:0.5px;">Completed On</span><br>
+                          <span style="font-size:15px;color:#333333;font-weight:500;">{completed_at}</span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:0 0 8px;font-size:15px;color:#555555;line-height:1.6;">
+                If you have any questions about your order, feel free to reach out to our support team.
+              </p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="background-color:#f8f9fc;padding:24px 40px;border-top:1px solid #e8eaef;text-align:center;">
+              <p style="margin:0 0 4px;font-size:13px;color:#999999;">
+                Thank you for shopping with us!
+              </p>
+              <p style="margin:0;font-size:12px;color:#bbbbbb;">
+                &copy; {datetime.utcnow().year} E-Commerce Store. All rights reserved.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+"""
 
 
 def send_email_via_gmail(payload: OrderCompletedEmailRequest) -> None:
@@ -83,7 +157,7 @@ def send_email_via_gmail(payload: OrderCompletedEmailRequest) -> None:
     message["From"] = from_email
     message["To"] = payload.to_email
     message["Subject"] = f"Order #{payload.order_id} completed"
-    message.attach(MIMEText(build_email_body(payload), "plain"))
+    message.attach(MIMEText(build_email_body(payload), "html"))
 
     with smtplib.SMTP(smtp_host, smtp_port) as server:
         server.starttls()
